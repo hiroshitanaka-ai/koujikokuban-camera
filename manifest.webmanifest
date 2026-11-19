@@ -1,7 +1,7 @@
 {
   "name": "工事黒板カメラ",
   "short_name": "黒板カメラ",
-  "description": "デジタル工事黒板つきカメラ（端末内暗号化保存・完全オフライン）",
+  "description": "工事黒板付き撮影。写真を端末内に暗号化して保存し、30日ごとにオンラインで自動認証します。",
   "lang": "ja",
   "start_url": "./",
   "scope": "./",
@@ -10,8 +10,8 @@
   "background_color": "#000000",
   "theme_color": "#000000",
   "icons": [
-    { "src": "icon-180.png", "sizes": "180x180", "type": "image/png" },
-    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
-    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+    { "src": "kokuban-icon-v211-180.png", "sizes": "180x180", "type": "image/png" },
+    { "src": "kokuban-icon-v211-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "kokuban-icon-v211-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
   ]
 }
