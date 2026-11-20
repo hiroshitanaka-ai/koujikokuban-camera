@@ -69,6 +69,7 @@
 
   <div class="cam-top">
     <button id="btn-lock" class="icon-btn" aria-label="ロック">🔒</button>
+    <button id="btn-templates" class="chip manage-templates">事前登録</button>
     <div id="preset-bar" class="chips"></div>
     <button id="btn-settings" class="icon-btn" aria-label="設定">⚙︎</button>
   </div>
@@ -130,6 +131,37 @@
   </div>
 </div>
 
+<!-- テンプレート事前登録 -->
+<section id="screen-templates" class="screen page" hidden aria-labelledby="tpl-title">
+  <header class="bar">
+    <button id="tpl-back" class="btn small">‹ カメラ</button>
+    <strong id="tpl-title">テンプレート事前登録</strong>
+    <button id="tpl-save" class="btn small primary" hidden>保存</button>
+  </header>
+  <div class="settings" id="tpl-library">
+    <button id="tpl-new" class="btn primary wide">＋ 新規登録</button>
+    <p class="muted small-text">この端末の写真庫に保存します。使うときはカメラ画面で名前を選んでください。</p>
+    <p id="tpl-empty" class="muted">登録済みのテンプレートはありません。</p>
+    <ul id="tpl-items" class="template-list"></ul>
+  </div>
+  <div class="settings" id="tpl-form" hidden>
+    <label class="field">テンプレート名
+      <input id="tpl-name" type="text" placeholder="例：A棟 配管・施工前" autocomplete="off" required>
+    </label>
+    <div class="template-tools">
+      <strong>黒板の内容</strong>
+      <button id="tpl-mode" class="btn small">項目を編集</button>
+    </div>
+    <div id="tpl-fields"></div>
+    <button id="tpl-add" class="btn wide" hidden>＋ 項目を追加</button>
+    <p id="tpl-note" class="warn"></p>
+    <details id="tpl-preview-details">
+      <summary>黒板のプレビュー</summary>
+      <canvas id="tpl-preview"></canvas>
+    </details>
+  </div>
+</section>
+
 <!-- 写真一覧 -->
 <section id="screen-gallery" class="screen page" hidden>
   <header class="bar">
@@ -176,7 +208,7 @@
   </header>
   <div class="settings">
     <h3>撮影</h3>
-    <label class="field">保存する画像の大きさ（長辺）
+    <label class="field">横長4:3で保存する画像の大きさ（上限）
       <select id="st-size">
         <option value="1280">1280×960（約120万画素・軽い）</option>
         <option value="1600">1600×1200（約190万画素）</option>
