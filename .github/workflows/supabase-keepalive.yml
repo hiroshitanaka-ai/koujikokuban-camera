@@ -1,0 +1,175 @@
+name: Supabase DB activity check
+
+# Default OFF. Publishing this PR must not activate the database probe.
+# Activation requires a separate, explicit approval; see ../SUPABASE_KEEPALIVE.md.
+"on":
+  schedule:
+    # UTC 00:23 / 08:23 / 16:23 = JST 09:23 / 17:23 / 01:23.
+    - cron: '23 0,8,16 * * *'
+  workflow_dispatch:
+
+# No checkout, repository writes, or third-party Actions are needed.
+permissions: {}
+
+concurrency:
+  group: supabase-db-activity
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    name: Read-only database probe (requires explicit activation)
+    if: >-
+      github.repository == 'hiroshitanaka010936/koujikokuban-camera' &&
+      github.ref == 'refs/heads/main' &&
+      vars.SUPABASE_KEEPALIVE_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - name: Verify the existing read-only Supabase RPC
+        env:
+          SUPABASE_KEEPALIVE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_KEEPALIVE_PUBLISHABLE_KEY }}
+        shell: python3 {0}
+        run: |
+          import datetime
+          import json
+          import os
+          import re
+          import ssl
+          import sys
+          import time
+          import urllib.error
+          import urllib.request
+
+          # Match the project used by current auth.js. Never accept a caller-supplied URL.
+          ENDPOINT = "https://wufbvfumsrwkgxsztuea.supabase.co/rest/v1/rpc/kokuban_healthcheck"
+          TIMEOUT_SECONDS = 15
+          MAX_RESPONSE_BYTES = 1024
+          RETRY_DELAYS = (5, 15)
+          RETRY_HTTP = {408, 429, 500, 502, 503, 504}
+
+
+          class ProbeFailure(Exception):
+              def __init__(self, category, retryable=False):
+                  self.category = category
+                  self.retryable = retryable
+                  super().__init__(category)
+
+
+          class NoRedirect(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self, req, fp, code, msg, headers, newurl):
+                  # Never forward the apikey header to a redirect destination.
+                  return None
+
+
+          def http_failure(status):
+              if 300 <= status < 400:
+                  return ProbeFailure("REDIRECT_REFUSED")
+              if status == 540:
+                  return ProbeFailure("PROJECT_PAUSED")
+              category = {
+                  401: "AUTHENTICATION_FAILED",
+                  403: "PERMISSION_DENIED",
+                  404: "RPC_NOT_FOUND",
+                  405: "RPC_NOT_READ_ONLY",
+              }.get(status, "HTTP_" + str(status))
+              return ProbeFailure(category, status in RETRY_HTTP)
+
+
+          def probe_once(key):
+              request = urllib.request.Request(
+                  ENDPOINT,
+                  method="GET",
+                  headers={
+                      "apikey": key,
+                      "Accept": "application/json",
+                      "Accept-Profile": "public",
+                      "Cache-Control": "no-cache, no-store",
+                      "Pragma": "no-cache",
+                      "User-Agent": "koujikokuban-camera-db-activity/1.0",
+                  },
+              )
+              opener = urllib.request.build_opener(
+                  NoRedirect(),
+                  urllib.request.HTTPSHandler(context=ssl.create_default_context()),
+              )
+              try:
+                  with opener.open(request, timeout=TIMEOUT_SECONDS) as response:
+                      if response.status != 200:
+                          raise http_failure(response.status)
+                      content_type = response.headers.get("Content-Type", "")
+                      if content_type.split(";", 1)[0].strip().lower() != "application/json":
+                          raise ProbeFailure("UNEXPECTED_CONTENT_TYPE")
+                      raw = response.read(MAX_RESPONSE_BYTES + 1)
+                      if len(raw) > MAX_RESPONSE_BYTES:
+                          raise ProbeFailure("RESPONSE_TOO_LARGE")
+              except urllib.error.HTTPError as error:
+                  status = error.code
+                  error.close()
+                  raise http_failure(status) from None
+              except ssl.SSLError:
+                  raise ProbeFailure("TLS_FAILED") from None
+              except urllib.error.URLError as error:
+                  if isinstance(error.reason, ssl.SSLError):
+                      raise ProbeFailure("TLS_FAILED") from None
+                  raise ProbeFailure("NETWORK_FAILED", retryable=True) from None
+              except (TimeoutError, ConnectionError, OSError):
+                  raise ProbeFailure("NETWORK_FAILED", retryable=True) from None
+              try:
+                  result = json.loads(raw)
+              except (ValueError, UnicodeError):
+                  raise ProbeFailure("INVALID_JSON") from None
+              # bool is a subclass of int: true and 1.0 must not count as success.
+              if type(result) is not int or result != 1:
+                  raise ProbeFailure("UNEXPECTED_RPC_RESULT")
+
+
+          def report(success, category, attempts):
+              timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+              outcome = "DB_READ_SUCCEEDED" if success else "DB_READ_FAILED"
+              print(("::notice::" if success else "::error::") +
+                    f"{outcome}: {category}; attempts={attempts}; checked_at={timestamp}")
+              # Never print the key, request headers, response body, or exception text.
+              summary = os.environ.get("GITHUB_STEP_SUMMARY")
+              if summary:
+                  try:
+                      with open(summary, "a", encoding="utf-8") as file:
+                          file.write(
+                              "## Supabase database activity check\n\n"
+                              f"- Result: `{outcome}`\n"
+                              f"- Detail: `{category}`\n"
+                              f"- Attempts: {attempts}\n"
+                              f"- Checked at (UTC): {timestamp}\n"
+                              "- Method: GET of the existing STABLE, invoker RPC; no application data returned.\n"
+                              "- This result does not prove prevention of inactivity pausing.\n"
+                          )
+                  except OSError:
+                      print("::error::SUMMARY_WRITE_FAILED")
+                      return 1
+              return 0 if success else 1
+
+
+          def main():
+              key = os.environ.get("SUPABASE_KEEPALIVE_PUBLISHABLE_KEY", "")
+              if not key:
+                  return report(False, "MISSING_PUBLISHABLE_KEY", 0)
+              # Only modern low-privilege keys; reject secret/service-role/user JWTs.
+              if not re.fullmatch(r"sb_publishable_[A-Za-z0-9_-]{20,128}", key):
+                  return report(False, "INVALID_PUBLISHABLE_KEY", 0)
+              for attempt in range(1, len(RETRY_DELAYS) + 2):
+                  try:
+                      probe_once(key)
+                      return report(True, "EXPECTED_INTEGER_1", attempt)
+                  except ProbeFailure as error:
+                      if not error.retryable or attempt > len(RETRY_DELAYS):
+                          return report(False, error.category, attempt)
+                      delay = RETRY_DELAYS[attempt - 1]
+                      print(f"::warning::{error.category}; attempt={attempt}; retry_in_seconds={delay}")
+                      time.sleep(delay)
+                  except Exception:
+                      # Fail closed without leaking an unexpected exception's contents.
+                      return report(False, "UNEXPECTED_CLIENT_ERROR", attempt)
+              return report(False, "RETRY_EXHAUSTED", len(RETRY_DELAYS) + 1)
+
+
+          if __name__ == "__main__":
+              sys.exit(main())
